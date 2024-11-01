@@ -1,65 +1,66 @@
-// src/pages/SalaVideollamada.jsx
-import { useEffect, useState, useRef } from "react";
-import SimplePeer from "simple-peer";
-import { useParams } from "react-router-dom";
-import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg";
+// SalaVideollamada.jsx
+import React, { useState, useRef, useEffect } from "react";
+import Peer from "simple-peer";
 
-export default function SalaVideollamada() {
-  const { id } = useParams();
+let ffmpeg = null;
+
+const initFFmpeg = async () => {
+  if (!ffmpeg) {
+    const { createFFmpeg, fetchFile } = await import("@ffmpeg/ffmpeg");
+    ffmpeg = createFFmpeg({ log: true });
+    await ffmpeg.load();
+  }
+};
+
+export default function SalaVideollamada({ id, link }) {
   const [peers, setPeers] = useState([]);
+  const [recording, setRecording] = useState(false);
+  const [recordedChunks, setRecordedChunks] = useState([]);
+  const [recorder, setRecorder] = useState(null);
+
   const localVideo = useRef();
   const remoteVideo = useRef();
-  const [stream, setStream] = useState(null);
-  const [recording, setRecording] = useState(false);
-  const [recorder, setRecorder] = useState(null);
-  const [recordedChunks, setRecordedChunks] = useState([]);
-  const [callEnded, setCallEnded] = useState(false);
-
-  const ffmpeg = createFFmpeg({ log: true });
+  const streamRef = useRef();
 
   useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        localVideo.current.srcObject = stream;
-        setStream(stream);
-      })
-      .catch((error) => {
-        console.error("Error al acceder a la cámara/micrófono:", error);
-        alert("No se pudo acceder a la cámara o al micrófono. Verifica los permisos.");
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      localVideo.current.srcObject = stream;
+      streamRef.current = stream;
+
+      const peer = new Peer({
+        initiator: !id,
+        trickle: false,
+        stream: stream,
       });
-  }, []);
 
-  const iniciarLlamada = () => {
-    if (!stream) {
-      alert("No se puede iniciar la llamada sin acceso al video.");
-      return;
-    }
+      peer.on("signal", (data) => {
+        if (!id) {
+          link.current = JSON.stringify(data);
+        } else {
+          peer.signal(id);
+        }
+      });
 
-    const peer = new SimplePeer({
-      initiator: true,
-      trickle: false,
-      stream: stream,
+      peer.on("stream", (remoteStream) => {
+        remoteVideo.current.srcObject = remoteStream;
+      });
+
+      setPeers((prevPeers) => [...prevPeers, peer]);
     });
 
-    peer.on("signal", (data) => {
-      console.log("SIGNAL", JSON.stringify(data));
-      // Aquí deberías implementar un intercambio de señales con WebSocket
-    });
+    return () => {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    };
+  }, [id, link]);
 
-    peer.on("stream", (remoteStream) => {
-      remoteVideo.current.srcObject = remoteStream;
-    });
+  const handleGrabar = async () => {
+    await initFFmpeg();
 
-    setPeers([...peers, peer]);
-  };
-
-  const grabarLlamada = async () => {
     if (recording) {
-      // Detiene la grabación y convierte el archivo
       recorder.stop();
       setRecording(false);
     } else {
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(streamRef.current);
       setRecorder(mediaRecorder);
       setRecordedChunks([]);
 
@@ -72,10 +73,8 @@ export default function SalaVideollamada() {
       mediaRecorder.onstop = async () => {
         const blob = new Blob(recordedChunks, { type: "video/webm" });
         const webmFile = new File([blob], "grabacion.webm", { type: "video/webm" });
-        
-        // Cargar ffmpeg y convertir a mp4
-        await ffmpeg.load();
-        ffmpeg.FS("writeFile", "grabacion.webm", await fetchFile(webmFile));
+
+        await ffmpeg.FS("writeFile", "grabacion.webm", await fetchFile(webmFile));
         await ffmpeg.run("-i", "grabacion.webm", "grabacion.mp4");
 
         const mp4Data = ffmpeg.FS("readFile", "grabacion.mp4");
@@ -83,7 +82,7 @@ export default function SalaVideollamada() {
         const url = URL.createObjectURL(mp4Blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `grabacion-${id}.mp4`;
+        a.download = `grabacion-${id || "new"}.mp4`;
         a.click();
       };
 
@@ -92,30 +91,23 @@ export default function SalaVideollamada() {
     }
   };
 
-  const colgarLlamada = () => {
-    setCallEnded(true);
+  const handleColgar = () => {
     peers.forEach((peer) => peer.destroy());
-    setStream(null);
+    streamRef.current.getTracks().forEach((track) => track.stop());
+    alert("Gracias por hacer feliz a un abuelito esta navidad");
   };
-
-  if (callEnded) {
-    return <h1>Gracias por hacer feliz a un abuelito esta navidad 🎄</h1>;
-  }
 
   return (
     <div>
-      <h1>Videollamada - Sala {id}</h1>
-      <video ref={localVideo} autoPlay muted className="w-1/2" />
-      <video ref={remoteVideo} autoPlay className="w-1/2" />
-      <button onClick={iniciarLlamada} className="btn-primary mt-4">
-        Iniciar Llamada
+      <h2>Videollamada</h2>
+      <div>
+        <video ref={localVideo} autoPlay muted style={{ width: "300px" }} />
+        <video ref={remoteVideo} autoPlay style={{ width: "300px" }} />
+      </div>
+      <button onClick={handleGrabar}>
+        {recording ? "Detener Grabación" : "Grabar"}
       </button>
-      <button onClick={grabarLlamada} className="btn-primary mt-4">
-        {recording ? "Detener Grabación" : "Grabar Videollamada"}
-      </button>
-      <button onClick={colgarLlamada} className="btn-primary mt-4">
-        Colgar
-      </button>
+      <button onClick={handleColgar}>Colgar</button>
     </div>
   );
 }
