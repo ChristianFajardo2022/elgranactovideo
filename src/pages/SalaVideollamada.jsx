@@ -18,38 +18,52 @@ export default function SalaVideollamada({ id, link }) {
   const [recordedChunks, setRecordedChunks] = useState([]);
   const [recorder, setRecorder] = useState(null);
 
-  const localVideo = useRef();
-  const remoteVideo = useRef();
-  const streamRef = useRef();
+  const localVideo = useRef(null);
+  const remoteVideo = useRef(null);
+  const streamRef = useRef(null);
 
   useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      localVideo.current.srcObject = stream;
-      streamRef.current = stream;
-
-      const peer = new Peer({
-        initiator: !id,
-        trickle: false,
-        stream: stream,
-      });
-
-      peer.on("signal", (data) => {
-        if (!id) {
-          link.current = JSON.stringify(data);
-        } else {
-          peer.signal(id);
+    const setupMedia = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (localVideo.current) {
+          localVideo.current.srcObject = stream;
         }
-      });
+        streamRef.current = stream;
 
-      peer.on("stream", (remoteStream) => {
-        remoteVideo.current.srcObject = remoteStream;
-      });
+        const peer = new Peer({
+          initiator: !id,
+          trickle: false,
+          stream: stream,
+        });
 
-      setPeers((prevPeers) => [...prevPeers, peer]);
-    });
+        peer.on("signal", (data) => {
+          if (!id) {
+            link.current = JSON.stringify(data);
+          } else {
+            peer.signal(id);
+          }
+        });
+
+        peer.on("stream", (remoteStream) => {
+          if (remoteVideo.current) {
+            remoteVideo.current.srcObject = remoteStream;
+          }
+        });
+
+        setPeers((prevPeers) => [...prevPeers, peer]);
+      } catch (error) {
+        console.error("Error accessing media devices.", error);
+      }
+    };
+
+    setupMedia();
 
     return () => {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      peers.forEach((peer) => peer.destroy());
     };
   }, [id, link]);
 
@@ -93,12 +107,14 @@ export default function SalaVideollamada({ id, link }) {
 
   const handleColgar = () => {
     peers.forEach((peer) => peer.destroy());
-    streamRef.current.getTracks().forEach((track) => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    }
     alert("Gracias por hacer feliz a un abuelito esta navidad");
   };
 
   return (
-    <div>
+    <div className="bg-black text-white flex flex-col items-center justify-center h-screen">
       <h2>Videollamada</h2>
       <div>
         <video ref={localVideo} autoPlay muted style={{ width: "300px" }} />
